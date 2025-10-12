@@ -142,16 +142,13 @@ const Record = packed struct {
     class: u16,
     ttl: u32,
     length: u16,
+
     fn from_bytes(self: *@This(), src: []const u8) void {
         @memcpy(
             @as([]u8, @ptrCast(@alignCast(self))),
             src[0..@sizeOf(Record)],
         );
         std.mem.byteSwapAllFields(@This(), self);
-        // self.type = @enumFromInt(@byteSwap(@intFromEnum(self.type)));
-        // self.class = @byteSwap(self.class);
-        // self.ttl = @byteSwap(self.ttl);
-        // self.length = @byteSwap(self.length);
     }
 };
 
