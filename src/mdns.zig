@@ -18,7 +18,7 @@ pub fn main() !void {
     var buf: [1024]u8 = undefined;
     while (true) {
         const len = try std.posix.recv(sock, &buf, 0);
-        if (len < Header.packed_size()) continue;
+        if (len < packed_size(Header)) continue;
         const data = buf[0..len];
         var packet: MDNSPacket = undefined;
         packet.from_bytes(data);
@@ -26,12 +26,12 @@ pub fn main() !void {
     }
 }
 
-const MDNSPacket = struct {
+pub const MDNSPacket = struct {
     header: Header,
 
     fn from_bytes(self: *@This(), src: []const u8) void {
         self.header.from_packet(src);
-        var ofs: usize = Header.packed_size();
+        var ofs: usize = packed_size(Header);
         std.debug.print("questions:\n", .{});
         for (0..self.header.num_questions) |_| {
             ofs = self.read_name(src, ofs);
@@ -42,8 +42,8 @@ const MDNSPacket = struct {
             ofs = self.read_name(src, ofs);
             var record: Record = undefined;
             record.from_bytes(src[ofs..]);
-            std.debug.print("{any}:\n", .{record});
-            ofs += 10;
+            std.debug.print("record: {any}:\n", .{record});
+            ofs += packed_size(Record);
             ofs = self.read_record(src, ofs, record);
         }
     }
@@ -96,11 +96,21 @@ const MDNSPacket = struct {
     fn read_record(self: *@This(), src: []const u8, ofs_in: usize, record: Record) usize {
         var ofs = ofs_in;
         switch (record.type) {
+            .A => {
+                ofs = self.read_string(src, ofs, 4);
+            },
             .CNAME, .PTR => {
                 ofs = self.read_name(src, ofs);
             },
             .TXT => {
                 ofs = self.read_string(src, ofs, record.length);
+            },
+            .SRV => {
+                var service: Service = undefined;
+                service.from_bytes(src[ofs..]);
+                std.debug.print("service: {any}\n", .{service});
+                ofs += packed_size(Service);
+                ofs = self.read_name(src, ofs);
             },
             else => @panic("RECORD NOT IMPLEMENTED"),
         }
@@ -115,7 +125,7 @@ const MDNSPacket = struct {
     }
 };
 
-const Record = packed struct {
+pub const Record = packed struct {
     type: enum(u16) {
         A = 1,
         NS = 2,
@@ -145,13 +155,26 @@ const Record = packed struct {
 
     fn from_bytes(self: *@This(), src: []const u8) void {
         @memcpy(
-            @as([]u8, @ptrCast(@alignCast(self))),
-            src[0..@sizeOf(Record)],
+            @as([]u8, @ptrCast(@alignCast(self)))[0..packed_size(@This())],
+            src[0..packed_size(@This())],
         );
         std.mem.byteSwapAllFields(@This(), self);
     }
 };
 
+pub const Service = packed struct {
+    priority: u16,
+    weight: u16,
+    port: u16,
+
+    fn from_bytes(self: *@This(), src: []const u8) void {
+        @memcpy(
+            @as([]u8, @ptrCast(@alignCast(self)))[0..packed_size(@This())],
+            src[0..packed_size(@This())],
+        );
+        std.mem.byteSwapAllFields(@This(), self);
+    }
+};
 // def _read_questions(self) -> None:
 // """Reads questions section of packet"""
 // view = self.view
@@ -182,8 +205,8 @@ const Record = packed struct {
 //     )
 // return name
 
-const Header = packed struct {
-    const Flags = packed struct { // in reverse order network
+pub const Header = packed struct {
+    pub const Flags = packed struct { // in reverse order network
         recursion_desired: bool,
         truncated: bool,
         authoritative_answer: bool,
@@ -219,7 +242,10 @@ const Header = packed struct {
 
     fn from_packet(self: *@This(), src: []const u8) void {
         const dstslice = @as([]u8, @ptrCast(@alignCast(self)));
-        @memcpy(dstslice, src[0..dstslice.len]);
+        @memcpy(
+            dstslice[0..packed_size(@This())],
+            src[0..packed_size(@This())],
+        );
         if (@import("builtin").cpu.arch.endian() == .little) {
             self.id = @byteSwap(self.id);
             self.num_questions = @byteSwap(self.num_questions);
@@ -228,11 +254,11 @@ const Header = packed struct {
             self.num_additionals = @byteSwap(self.num_additionals);
         }
     }
-
-    fn packed_size() usize {
-        return @bitSizeOf(@This()) / 8;
-    }
 };
+
+fn packed_size(T: type) usize {
+    return @bitSizeOf(T) / 8;
+}
 
 test "parseQueryResponse" {
     const query = "\x00\x00\x00\x00\x00\x01\x00\x00\x00\x00\x00\x00\x0b\x5f\x67\x6f\x6f\x67\x6c\x65\x63\x61\x73\x74\x04\x5f\x74\x63\x70\x05\x6c\x6f\x63\x61\x6c\x00\x00\x0c\x80\x01";

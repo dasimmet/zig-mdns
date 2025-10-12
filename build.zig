@@ -9,6 +9,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
+    if (target.result.os.tag == .windows) mdns.link_libc = true;
 
     const mdns_listen = b.addExecutable(.{
         .name = "mdns-listen",
