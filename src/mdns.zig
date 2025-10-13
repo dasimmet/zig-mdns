@@ -20,9 +20,10 @@ pub fn main() !void {
         const len = try std.posix.recv(sock, &buf, 0);
         if (len < packed_size(Header)) continue;
         const data = buf[0..len];
+        std.debug.print("data: 0x{x}\n", .{data});
         var packet: MDNSPacket = undefined;
         packet.from_bytes(data);
-        std.debug.print("{x}\n{any}\n\n", .{ data, packet.header });
+        std.debug.print("header: {any}\n\n", .{packet.header});
     }
 }
 
@@ -32,19 +33,23 @@ pub const MDNSPacket = struct {
     fn from_bytes(self: *@This(), src: []const u8) void {
         self.header.from_packet(src);
         var ofs: usize = packed_size(Header);
-        std.debug.print("questions:\n", .{});
-        for (0..self.header.num_questions) |_| {
-            ofs = self.read_name(src, ofs);
-        }
-        std.debug.print("others:\n", .{});
-        const num_others = self.header.num_answers + self.header.num_authorities + self.header.num_additionals;
-        for (0..num_others) |_| {
-            ofs = self.read_name(src, ofs);
-            var record: Record = undefined;
-            record.from_bytes(src[ofs..]);
-            std.debug.print("record: {any}:\n", .{record});
-            ofs += packed_size(Record);
-            ofs = self.read_record(src, ofs, record);
+
+        if (self.header.num_questions != 0) {
+            std.debug.print("questions: {d}\n", .{self.header.num_questions});
+            for (0..self.header.num_questions) |_| {
+                ofs = self.read_name(src, ofs);
+            }
+        } else {
+            const num_others = self.header.num_answers + self.header.num_authorities + self.header.num_additionals;
+            std.debug.print("others: {d}\n", .{num_others});
+            for (0..num_others) |i| {
+                ofs = self.read_name(src, ofs);
+                var record: Record = undefined;
+                record.from_bytes(src[ofs..]);
+                std.debug.print("record: {d} {any}:\n", .{ i, record });
+                ofs += packed_size(Record);
+                ofs = self.read_record(src, ofs, record);
+            }
         }
     }
 
@@ -58,9 +63,6 @@ pub const MDNSPacket = struct {
                 .ofs = ofs,
                 .len = len,
             }});
-            if (len > src.len) {
-                @panic("OVERSIZED DNS NAME LENGTH");
-            }
             if (len == 0) {
                 return ofs + 1;
             }
@@ -112,7 +114,10 @@ pub const MDNSPacket = struct {
                 ofs += packed_size(Service);
                 ofs = self.read_name(src, ofs);
             },
-            else => @panic("RECORD NOT IMPLEMENTED"),
+            else => {
+                std.debug.print("RECORD NOT IMPLEMENTED: {any}:\n", .{record});
+                ofs += record.length;
+            },
         }
         return ofs;
     }
@@ -122,6 +127,57 @@ pub const MDNSPacket = struct {
         const ofs = ofs_in + length;
         std.debug.print("string: {s}\n", .{src[ofs_in .. ofs_in + length]});
         return ofs;
+    }
+};
+
+pub const Header = packed struct {
+    pub const Flags = packed struct { // in reverse order network
+        recursion_desired: bool,
+        truncated: bool,
+        authoritative_answer: bool,
+        opcode: u4,
+        qr: enum(u1) {
+            query,
+            response,
+        },
+
+        response_code: enum(u4) {
+            ok,
+            format_error,
+            server_failure,
+            name_error,
+            not_implemented,
+            refused,
+            yx_domain,
+            yx_rr_set,
+            nx_rr_set,
+            not_auth,
+            not_zone,
+            _,
+        },
+        __reserved: u3,
+        recursion_available: bool,
+    };
+    id: u16,
+    flags: Flags,
+    num_questions: u16,
+    num_answers: u16,
+    num_authorities: u16,
+    num_additionals: u16,
+
+    fn from_packet(self: *@This(), src: []const u8) void {
+        const dstslice = @as([]u8, @ptrCast(@alignCast(self)));
+        @memcpy(
+            dstslice[0..packed_size(@This())],
+            src[0..packed_size(@This())],
+        );
+        if (@import("builtin").cpu.arch.endian() == .little) {
+            self.id = @byteSwap(self.id);
+            self.num_questions = @byteSwap(self.num_questions);
+            self.num_answers = @byteSwap(self.num_answers);
+            self.num_authorities = @byteSwap(self.num_authorities);
+            self.num_additionals = @byteSwap(self.num_additionals);
+        }
     }
 };
 
@@ -173,86 +229,6 @@ pub const Service = packed struct {
             src[0..packed_size(@This())],
         );
         std.mem.byteSwapAllFields(@This(), self);
-    }
-};
-// def _read_questions(self) -> None:
-// """Reads questions section of packet"""
-// view = self.view
-// questions = self._questions
-// for _ in range(self._num_questions):
-//     name = self._read_name()
-//     offset = self.offset
-//     self.offset += 4
-//     # The question has 2 unsigned shorts in network order
-//     type_ = view[offset] << 8 | view[offset + 1]
-//     class_ = view[offset + 2] << 8 | view[offset + 3]
-//     question = DNSQuestion(name, type_, class_)
-//     if question.unique:  # QU questions use the same bit as unique
-//         self._has_qu_question = True
-//     questions.append(question)
-
-// def _read_name(self) -> str:
-// """Reads a domain name from the packet."""
-// labels: List[str] = []
-// seen_pointers: Set[int] = set()
-// original_offset = self.offset
-// self.offset = self._decode_labels_at_offset(original_offset, labels, seen_pointers)
-// self._name_cache[original_offset] = labels
-// name = ".".join(labels) + "."
-// if len(name) > MAX_NAME_LENGTH:
-//     raise IncomingDecodeError(
-//         f"DNS name {name} exceeds maximum length of {MAX_NAME_LENGTH} from {self.source}"
-//     )
-// return name
-
-pub const Header = packed struct {
-    pub const Flags = packed struct { // in reverse order network
-        recursion_desired: bool,
-        truncated: bool,
-        authoritative_answer: bool,
-        opcode: u4,
-        qr: enum(u1) {
-            query,
-            response,
-        },
-
-        response_code: enum(u4) {
-            ok,
-            format_error,
-            server_failure,
-            name_error,
-            not_implemented,
-            refused,
-            yx_domain,
-            yx_rr_set,
-            nx_rr_set,
-            not_auth,
-            not_zone,
-            _,
-        },
-        __reserved: u3,
-        recursion_available: bool,
-    };
-    id: u16,
-    flags: Flags,
-    num_questions: u16,
-    num_answers: u16,
-    num_authorities: u16,
-    num_additionals: u16,
-
-    fn from_packet(self: *@This(), src: []const u8) void {
-        const dstslice = @as([]u8, @ptrCast(@alignCast(self)));
-        @memcpy(
-            dstslice[0..packed_size(@This())],
-            src[0..packed_size(@This())],
-        );
-        if (@import("builtin").cpu.arch.endian() == .little) {
-            self.id = @byteSwap(self.id);
-            self.num_questions = @byteSwap(self.num_questions);
-            self.num_answers = @byteSwap(self.num_answers);
-            self.num_authorities = @byteSwap(self.num_authorities);
-            self.num_additionals = @byteSwap(self.num_additionals);
-        }
     }
 };
 
