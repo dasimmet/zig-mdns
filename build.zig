@@ -9,12 +9,16 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
-    if (target.result.os.tag == .windows) mdns.link_libc = true;
 
     const mdns_listen = b.addExecutable(.{
         .name = "mdns-listen",
-        .root_module = mdns,
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/mdns-listen.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
     });
+    if (target.result.os.tag == .windows) mdns_listen.linkLibC();
     b.installArtifact(mdns_listen);
     b.step("run", "").dependOn(&b.addRunArtifact(mdns_listen).step);
 
