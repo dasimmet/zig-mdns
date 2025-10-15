@@ -25,7 +25,7 @@ pub fn main() !void {
         sock,
         std.posix.SOL.IP,
         std.os.linux.IP.ADD_MEMBERSHIP,
-        &addr.,
+        &.{224,0,0,251},
     );
 
     const stdout_fd = std.fs.File.stdout();
