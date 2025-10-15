@@ -464,3 +464,9 @@ test "parseQueryResponse" {
     try packet.parse(std.testing.allocator, nsec);
     packet.deinit(std.testing.allocator);
 }
+
+pub const ip_mreqn = extern struct {
+    imr_multiaddr: [4]u8, // multicast group address
+    imr_address: [4]u8, // local ip address
+    imr_ifindex: u32, // Interface index; cast to uint32_t
+};

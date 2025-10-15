@@ -6,8 +6,8 @@ pub fn main() !void {
     const gpa = gpa_impl.allocator();
     defer _ = gpa_impl.deinit();
 
-    const addr = try std.net.Address.parseIp("224.0.0.251", 5353);
-    const addr2 = try std.net.Address.parseIp("0.0.0.0", 5353);
+    const addr = try std.net.Address.resolveIp("224.0.0.251", 5353);
+    // const addr2 = try std.net.Address.parseIp("0.0.0.0", 5353);
     const sock = try std.posix.socket(
         std.posix.AF.INET,
         std.posix.SOCK.DGRAM | std.posix.SOCK.NONBLOCK,
@@ -20,12 +20,18 @@ pub fn main() !void {
         std.posix.SO.REUSEADDR,
         &std.mem.toBytes(@as(c_int, 1)),
     );
-    try std.posix.bind(sock, &addr2.any, addr.getOsSockLen());
+    try std.posix.bind(sock, &addr.any, addr.getOsSockLen());
+    const mreq = mdns.ip_mreqn{
+        .imr_multiaddr = .{ 224, 0, 0, 251 },
+        .imr_address = .{ 0, 0, 0, 0 },
+        .imr_ifindex = 0,
+    };
     try std.posix.setsockopt(
         sock,
-        std.posix.SOL.IP,
+        std.posix.IPPROTO.IP,
         std.os.linux.IP.ADD_MEMBERSHIP,
-        &.{224,0,0,251},
+        // &addr.any.data,
+        @ptrCast(&mreq),
     );
 
     const stdout_fd = std.fs.File.stdout();
@@ -38,6 +44,7 @@ pub fn main() !void {
 
     const t = std.time.microTimestamp();
     var pac_buf: [1024]u8 = undefined;
+    var pacs_received: usize = 0;
     while (std.time.microTimestamp() - t < 3 * std.time.us_per_s) {
         const len = std.posix.recv(sock, &pac_buf, 0) catch |err| switch (err) {
             error.WouldBlock => {
@@ -46,6 +53,7 @@ pub fn main() !void {
             },
             else => return err,
         };
+        pacs_received += 1;
         if (len < mdns.Packet.HeaderSize) continue;
         const data = pac_buf[0..len];
         try stdout.print("data: \"{f}\"\n", .{std.zig.fmtString(data)});
@@ -57,7 +65,7 @@ pub fn main() !void {
         };
         defer packet.deinit(gpa);
 
-        try stdout.print("packet: {f} skipped_records: {d}\n", .{
+        try stdout.print("packet: {f}\nskipped_records: {d}\n", .{
             std.json.fmt(packet.header, .{}),
             packet.skipped_records,
         });
@@ -75,6 +83,9 @@ pub fn main() !void {
         }
         try stdout.flush();
     }
+
+    try stdout.print("pacs_received: {d}\n", .{pacs_received});
+    try stdout.flush();
 }
 
 // try stdout.print("packet: {f}\n", .{struct {
