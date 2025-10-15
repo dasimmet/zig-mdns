@@ -20,7 +20,19 @@ pub fn build(b: *std.Build) void {
     });
     if (target.result.os.tag == .windows) mdns_listen.linkLibC();
     b.installArtifact(mdns_listen);
-    b.step("run", "").dependOn(&b.addRunArtifact(mdns_listen).step);
+    b.step("listen", "").dependOn(&b.addRunArtifact(mdns_listen).step);
+
+    const mdns_query = b.addExecutable(.{
+        .name = "mdns-query",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/mdns-query.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    if (target.result.os.tag == .windows) mdns_query.linkLibC();
+    b.installArtifact(mdns_listen);
+    b.step("listen", "").dependOn(&b.addRunArtifact(mdns_listen).step);
 
     const mdtest = b.addTest(.{
         .root_module = mdns,
