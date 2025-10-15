@@ -30,7 +30,6 @@ pub fn main() !void {
         sock,
         std.posix.IPPROTO.IP,
         std.os.linux.IP.ADD_MEMBERSHIP,
-        // &addr.any.data,
         @ptrCast(&mreq),
     );
 

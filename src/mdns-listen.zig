@@ -20,6 +20,17 @@ pub fn main() !void {
         &std.mem.toBytes(@as(c_int, 1)),
     );
     try std.posix.bind(sock, &addr.any, addr.getOsSockLen());
+    const mreq = mdns.ip_mreqn{
+        .imr_multiaddr = .{ 224, 0, 0, 251 },
+        .imr_address = .{ 0, 0, 0, 0 },
+        .imr_ifindex = 0,
+    };
+    try std.posix.setsockopt(
+        sock,
+        std.posix.IPPROTO.IP,
+        std.os.linux.IP.ADD_MEMBERSHIP,
+        @ptrCast(&mreq),
+    );
 
     const stdout_fd = std.fs.File.stdout();
     var stdout_buf: [1024]u8 = undefined;
