@@ -8,7 +8,7 @@ pub const Packet = struct {
     records: []Record = &.{},
     skipped_records: usize = 0,
 
-    pub const HeaderSize = packed_size(Header);
+    pub const HeaderSize = packed_bytesize(Header);
     pub const Header = packed struct {
         pub const Flags = packed struct { // in reverse order network
             recursion_desired: bool,
@@ -56,8 +56,8 @@ pub const Packet = struct {
         fn from_bytes(self: *@This(), src: []const u8) void {
             const dstslice = @as([]u8, @ptrCast(@alignCast(self)));
             @memcpy(
-                dstslice[0..packed_size(@This())],
-                src[0..packed_size(@This())],
+                dstslice[0..HeaderSize],
+                src[0..HeaderSize],
             );
             if (@import("builtin").cpu.arch.endian() == .little) {
                 self.id = @byteSwap(self.id);
@@ -127,11 +127,11 @@ const Parser = struct {
     current_name: std.ArrayList(u8),
     questions: std.ArrayList(Query) = .empty,
     records: std.ArrayList(Record) = .empty,
-    offset: usize = packed_size(Packet.Header),
+    offset: usize = Packet.HeaderSize,
     source: []const u8,
 
     pub fn parse(self: *@This()) ParseError!void {
-        if (self.source.len < packed_size(Packet.Header)) return error.SourceTooShort;
+        if (self.source.len < Packet.HeaderSize) return error.SourceTooShort;
         self.packet.header.from_bytes(self.source);
         self.packet.skipped_records = 0;
 
@@ -143,9 +143,10 @@ const Parser = struct {
         }
         for (0..self.packet.header.num_questions) |_| {
             try self.read_name(self.offset);
-            if (self.source_remaining().len < packed_size(Query.Footer)) return error.SourceTooShort;
+            if (self.source_remaining().len < Query.FooterSize) return error.SourceTooShort;
             var question: Query.Footer = undefined;
             question.from_bytes(self.source_remaining());
+            self.offset += Query.FooterSize;
             const question_name = try self.allocator.dupe(u8, self.current_name.items);
             errdefer self.allocator.free(question_name);
 
@@ -153,7 +154,6 @@ const Parser = struct {
                 .name = question_name,
                 .footer = question,
             });
-            self.offset += 4;
         }
         self.packet.questions = try self.questions.toOwnedSlice(self.allocator);
         errdefer {
@@ -172,10 +172,10 @@ const Parser = struct {
         const records = self.packet.header.num_others();
         for (0..records) |_| {
             try self.read_name(self.offset);
-            if (self.source_remaining().len < packed_size(Record.Header)) return error.SourceTooShort;
+            if (self.source_remaining().len < Record.HeaderSize) return error.SourceTooShort;
             var record_header: Record.Header = undefined;
             record_header.from_bytes(self.source_remaining());
-            self.offset += packed_size(Record.Header);
+            self.offset += Record.HeaderSize;
             try self.read_record(record_header);
         }
         self.packet.records = try self.records.toOwnedSlice(self.allocator);
@@ -310,10 +310,10 @@ const Parser = struct {
             .SRV => {
                 const name = try self.allocator.dupe(u8, self.current_name.items);
                 errdefer self.allocator.free(name);
-                if (self.source_remaining().len < packed_size(Service.Header)) return error.SourceTooShort;
+                if (self.source_remaining().len < Service.HeaderSize) return error.SourceTooShort;
                 var service: Service.Header = undefined;
                 service.from_bytes(self.source_remaining());
-                self.offset += packed_size(Service.Header);
+                self.offset += Service.HeaderSize;
                 try self.read_name(self.offset);
                 const srvname = try self.allocator.dupe(u8, self.current_name.items);
                 errdefer self.allocator.free(srvname);
@@ -387,6 +387,7 @@ pub const Query = struct {
     name: []const u8,
     footer: Footer,
 
+    pub const FooterSize = packed_bytesize(Footer);
     pub const Footer = packed struct {
         type: Type,
         class: Class,
@@ -447,6 +448,7 @@ pub const Record = struct {
         DLV,
     };
 
+    pub const HeaderSize = packed_bytesize(Header);
     pub const Header = packed struct {
         type: Type,
         class: Class,
@@ -455,8 +457,8 @@ pub const Record = struct {
 
         fn from_bytes(self: *@This(), src: []const u8) void {
             @memcpy(
-                @as([]u8, @ptrCast(@alignCast(self)))[0..packed_size(@This())],
-                src[0..packed_size(@This())],
+                @as([]u8, @ptrCast(@alignCast(self)))[0..HeaderSize],
+                src[0..HeaderSize],
             );
             std.mem.byteSwapAllFields(@This(), self);
         }
@@ -466,6 +468,7 @@ pub const Record = struct {
 pub const Service = struct {
     header: Header,
     body: []const u8,
+    pub const HeaderSize = packed_bytesize(Header);
     pub const Header = packed struct {
         priority: u16,
         weight: u16,
@@ -473,15 +476,15 @@ pub const Service = struct {
 
         fn from_bytes(self: *@This(), src: []const u8) void {
             @memcpy(
-                @as([]u8, @ptrCast(@alignCast(self)))[0..packed_size(@This())],
-                src[0..packed_size(@This())],
+                @as([]u8, @ptrCast(@alignCast(self)))[0..HeaderSize],
+                src[0..HeaderSize],
             );
             std.mem.byteSwapAllFields(@This(), self);
         }
     };
 };
 
-fn packed_size(T: type) usize {
+fn packed_bytesize(T: type) usize {
     return @bitSizeOf(T) / 8;
 }
 
