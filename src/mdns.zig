@@ -1,5 +1,7 @@
 const std = @import("std");
 
+pub const DNS_MAX_LEN = 256;
+
 // https://www.iana.org/assignments/dns-parameters/dns-parameters.xhtml
 
 pub const Packet = struct {
@@ -96,8 +98,6 @@ pub const Packet = struct {
     }
 };
 
-const DNS_MAX_LEN = 256;
-
 pub const ParseError = error{
     OutOfMemory,
     SourceTooShort,
@@ -145,6 +145,7 @@ const Parser = struct {
         if (self.source.len < Packet.HeaderSize) return error.SourceTooShort;
         self.packet.header.from_bytes(self.source);
         self.packet.skipped_records = 0;
+        errdefer self.packet.deinit(self.allocator);
         defer self.deinit();
 
         for (0..self.packet.header.num_questions) |_| {
@@ -162,12 +163,6 @@ const Parser = struct {
             });
         }
         self.packet.questions = try self.questions.toOwnedSlice(self.allocator);
-        errdefer {
-            for (self.packet.questions) |q| {
-                q.deinit(self.allocator);
-            }
-            self.allocator.free(self.packet.questions);
-        }
 
         const records = self.packet.header.num_others();
         for (0..records) |_| {
@@ -179,12 +174,6 @@ const Parser = struct {
             try self.read_record(record_header);
         }
         self.packet.records = try self.records.toOwnedSlice(self.allocator);
-        errdefer {
-            for (self.packet.records) |r| {
-                r.deinit(self.allocator);
-            }
-            self.allocator.free(self.packet.records);
-        }
 
         if (self.offset != self.source.len) {
             return error.TrailingBytes;

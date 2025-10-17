@@ -49,12 +49,3 @@ pub fn main() !void {
         try stdout.flush();
     }
 }
-
-// try stdout.print("packet: {f}\n", .{struct {
-//     pac: mdns.Packet,
-//     pub fn format(self: @This(), w: *std.io.Writer) !void {
-//         return std.zon.stringify.serialize(self.pac, .{}, w);
-//     }
-// }{
-//     .pac = packet,
-// }});
