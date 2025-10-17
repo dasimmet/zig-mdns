@@ -531,12 +531,3 @@ test "fuzzParser" {
     var ctx: FuzzParser = .{};
     try std.testing.fuzz(&ctx, FuzzParser.testOne, .{});
 }
-
-pub const ip_mreqn = extern struct {
-    /// multicast group address
-    imr_multiaddr: [4]u8 = @splat(0),
-    /// local ip address
-    imr_address: [4]u8 = @splat(0),
-    // Interface index; cast to uint32_t
-    imr_ifindex: u32 = 0,
-};

@@ -1,5 +1,6 @@
 const std = @import("std");
 const mdns = @import("mdns.zig");
+const Socket = @import("socket.zig");
 
 pub fn main() !void {
     var gpa_impl = std.heap.GeneralPurposeAllocator(.{}).init;
@@ -7,30 +8,10 @@ pub fn main() !void {
     defer _ = gpa_impl.deinit();
 
     const addr = try std.net.Address.parseIp("224.0.0.251", 5353);
-    const sock = try std.posix.socket(
-        std.posix.AF.INET,
-        std.posix.SOCK.DGRAM,
-        std.posix.IPPROTO.UDP,
-    );
-    defer std.posix.close(sock);
-    try std.posix.setsockopt(
-        sock,
-        std.posix.SOL.SOCKET,
-        std.posix.SO.REUSEADDR,
-        &std.mem.toBytes(@as(c_int, 1)),
-    );
-    try std.posix.bind(sock, &addr.any, addr.getOsSockLen());
-
-    const addr_any = try std.net.Address.resolveIp("0.0.0.0", 5353);
-    try std.posix.setsockopt(
-        sock,
-        std.posix.IPPROTO.IP,
-        std.os.linux.IP.ADD_MEMBERSHIP,
-        @ptrCast(&mdns.ip_mreqn{
-            .imr_multiaddr = @as(*const [4]u8, @ptrCast(&addr.in.sa.addr)).*,
-            .imr_address = @as(*const [4]u8, @ptrCast(&addr_any.in.sa.addr)).*,
-        }),
-    );
+    const sock = try Socket.open(.{
+        .addr = addr,
+    });
+    defer sock.close();
 
     const stdout_fd = std.fs.File.stdout();
     var stdout_buf: [1024]u8 = undefined;
@@ -39,9 +20,8 @@ pub fn main() !void {
 
     var pac_buf: [1024]u8 = undefined;
     while (true) {
-        const len = try std.posix.recv(sock, &pac_buf, 0);
-        if (len < mdns.Packet.HeaderSize) continue;
-        const data = pac_buf[0..len];
+        const data = try sock.receive(&pac_buf);
+        if (data.len < mdns.Packet.HeaderSize) continue;
         try stdout.print("data: \"{f}\"\n", .{std.zig.fmtString(data)});
         var packet: mdns.Packet = .{};
         packet.parse(gpa, data) catch |err| {

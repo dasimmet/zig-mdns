@@ -1,5 +1,6 @@
 const std = @import("std");
 const mdns = @import("mdns.zig");
+const Socket = @import("socket.zig");
 
 pub fn main() !void {
     var gpa_impl = std.heap.GeneralPurposeAllocator(.{}).init;
@@ -8,30 +9,12 @@ pub fn main() !void {
 
     const addr = try std.net.Address.resolveIp("224.0.0.251", 5353);
     // const addr6 = try std.net.Address.resolveIp("ff02::fb", 5353);
-    const sock = try std.posix.socket(
-        std.posix.AF.INET,
-        std.posix.SOCK.DGRAM | std.posix.SOCK.NONBLOCK,
-        std.posix.IPPROTO.UDP,
-    );
-    defer std.posix.close(sock);
-    try std.posix.setsockopt(
-        sock,
-        std.posix.SOL.SOCKET,
-        std.posix.SO.REUSEADDR,
-        &std.mem.toBytes(@as(c_int, 1)),
-    );
-    try std.posix.bind(sock, &addr.any, addr.getOsSockLen());
 
-    const addr_any = try std.net.Address.resolveIp("0.0.0.0", 5353);
-    try std.posix.setsockopt(
-        sock,
-        std.posix.IPPROTO.IP,
-        std.os.linux.IP.ADD_MEMBERSHIP,
-        @ptrCast(&mdns.ip_mreqn{
-            .imr_multiaddr = @as(*const [4]u8, @ptrCast(&addr.in.sa.addr)).*,
-            .imr_address = @as(*const [4]u8, @ptrCast(&addr_any.in.sa.addr)).*,
-        }),
-    );
+    const sock = try Socket.open(.{
+        .addr = addr,
+        .blocking = false,
+    });
+    defer sock.close();
 
     const stdout_fd = std.fs.File.stdout();
     var stdout_buf: [1024]u8 = undefined;
@@ -39,28 +22,27 @@ pub fn main() !void {
     const stdout = &stdout_writer.interface;
 
     const query1 = "\x00\x00\x00\x00\x00\x02\x00\x00\x00\x00\x00\x00\x0b_googlecast\x04_tcp\x05local\x00\x00\x0c\x80\x01\x05_http\xc0\x18\x00\x0c\x80\x01";
-    _ = try std.posix.sendto(sock, query1, 0, &addr.any, addr.getOsSockLen());
+    try sock.send(query1);
     // const query2 = "\x00\x00\x00\x00\x00\x02\x00\x00\x00\x00\x00\x00\x04_smb\x04_tcp\x05local\x00\x00\x0c\x00\x01\x0c_device-info\xc0\x11\x00\x0c\x00\x01";
     // const query2 = "\x00\x00\x00\x00\x00\x01\x00\x00\x00\x00\x00\x00\x0233\x03132\x03168\x03192\x07in-addr\x04arpa\x05local\x00\x00\x0c\x00\x01";
     // const query2 = "                                                                                                                       ";
     // _ = try std.posix.sendto(sock, query1, 0, &addr.any, addr.getOsSockLen());
 
-    const t = std.time.microTimestamp();
     var pac_buf: [1024]u8 = undefined;
     var pacs_received: usize = 0;
     var queries_received: usize = 0;
     var responses_received: usize = 0;
+    const t = std.time.microTimestamp();
     while (std.time.microTimestamp() - t < 3 * std.time.us_per_s) {
-        const len = std.posix.recv(sock, &pac_buf, 0) catch |err| switch (err) {
+        const data = sock.receive(&pac_buf) catch |err| switch (err) {
             error.WouldBlock => {
                 std.Thread.sleep(10 * std.time.ns_per_ms);
                 continue;
             },
             else => return err,
         };
+        if (data.len < mdns.Packet.HeaderSize) continue;
         pacs_received += 1;
-        if (len < mdns.Packet.HeaderSize) continue;
-        const data = pac_buf[0..len];
         try stdout.print("data: \"{f}\"\n", .{std.zig.fmtString(data)});
         var packet: mdns.Packet = .{};
         packet.parse(gpa, data) catch |err| {
