@@ -94,6 +94,7 @@ pub const Packet = struct {
             .source = src,
             .current_name = .initBuffer(&namebuf),
         };
+        defer parser.deinit();
         try parser.parse();
     }
 };
@@ -146,7 +147,6 @@ const Parser = struct {
         self.packet.header.from_bytes(self.source);
         self.packet.skipped_records = 0;
         errdefer self.packet.deinit(self.allocator);
-        defer self.deinit();
 
         for (0..self.packet.header.num_questions) |_| {
             try self.read_name(self.offset);
