@@ -40,6 +40,7 @@ pub fn build(b: *std.Build) void {
 
     const mdtest = b.addTest(.{
         .root_module = mdns,
+        .use_llvm = true,
     });
 
     b.step("test", "").dependOn(&b.addRunArtifact(mdtest).step);

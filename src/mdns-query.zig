@@ -38,8 +38,12 @@ pub fn main() !void {
     var stdout_writer = stdout_fd.writer(&stdout_buf);
     const stdout = &stdout_writer.interface;
 
-    const query = "\x00\x00\x00\x00\x00\x02\x00\x00\x00\x00\x00\x00\x0b_googlecast\x04_tcp\x05local\x00\x00\x0c\x80\x01\x05_http\xc0\x18\x00\x0c\x80\x01";
-    _ = try std.posix.sendto(sock, query, 0, &addr.any, addr.getOsSockLen());
+    const query1 = "\x00\x00\x00\x00\x00\x02\x00\x00\x00\x00\x00\x00\x0b_googlecast\x04_tcp\x05local\x00\x00\x0c\x80\x01\x05_http\xc0\x18\x00\x0c\x80\x01";
+    _ = try std.posix.sendto(sock, query1, 0, &addr.any, addr.getOsSockLen());
+    // const query2 = "\x00\x00\x00\x00\x00\x02\x00\x00\x00\x00\x00\x00\x04_smb\x04_tcp\x05local\x00\x00\x0c\x00\x01\x0c_device-info\xc0\x11\x00\x0c\x00\x01";
+    const query2 = "\x00\x00\x00\x00\x00\x01\x00\x00\x00\x00\x00\x00\x0233\x03132\x03168\x03192\x07in-addr\x04arpa\x05local\x00\x00\x0c\x00\x01";
+    // const query2 = "                                                                                                                       ";
+    _ = try std.posix.sendto(sock, query2, 0, &addr.any, addr.getOsSockLen());
 
     const t = std.time.microTimestamp();
     var pac_buf: [1024]u8 = undefined;
@@ -47,7 +51,7 @@ pub fn main() !void {
     while (std.time.microTimestamp() - t < 3 * std.time.us_per_s) {
         const len = std.posix.recv(sock, &pac_buf, 0) catch |err| switch (err) {
             error.WouldBlock => {
-                std.Thread.sleep(std.time.ms_per_s);
+                std.Thread.sleep(10 * std.time.ns_per_ms);
                 continue;
             },
             else => return err,
@@ -59,7 +63,7 @@ pub fn main() !void {
         var packet: mdns.Packet = undefined;
         packet.parse(gpa, data) catch |err| {
             try stdout.print("parse error: \"{}\"\n", .{err});
-            packet.deinit(gpa);
+            try stdout.flush();
             continue;
         };
         defer packet.deinit(gpa);

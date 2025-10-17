@@ -4,9 +4,9 @@ const std = @import("std");
 
 pub const Packet = struct {
     header: Header,
-    questions: []Query,
-    records: []Record,
-    skipped_records: usize,
+    questions: []Query = &.{},
+    records: []Record = &.{},
+    skipped_records: usize = 0,
 
     pub const HeaderSize = packed_size(Header);
     pub const Header = packed struct {
@@ -68,8 +68,8 @@ pub const Packet = struct {
             }
         }
 
-        fn num_others(self: @This()) u16 {
-            return self.num_answers + self.num_authorities + self.num_additionals;
+        fn num_others(self: @This()) usize {
+            return @as(usize, self.num_answers) + @as(usize, self.num_authorities) + @as(usize, self.num_additionals);
         }
     };
 
@@ -101,12 +101,24 @@ const DNS_MAX_LEN = 256;
 pub const ParseError = error{
     OutOfMemory,
     SourceTooShort,
+    TrailingBytes,
+} || ReadRecordError;
+
+pub const ReadRecordError = error{
+    InvalidRecordLength,
+    OutOfMemory,
+    ReadStringOutOfBounds,
+    SourceTooShort,
 } || ReadNameError;
 
 pub const ReadNameError = error{
-    OversizedLink,
-    SelfReferentialLink,
+    DNSNameTooLarge,
     InvalidLabelLength,
+    LabelLengthGreaterThanSource,
+    OversizedLink,
+    ReadNameOutOfBounds,
+    SelfReferentialLink,
+    SourceEndsWithPointer,
 };
 
 const Parser = struct {
@@ -123,8 +135,15 @@ const Parser = struct {
         self.packet.header.from_bytes(self.source);
         self.packet.skipped_records = 0;
 
+        errdefer {
+            for (self.questions.items) |q| {
+                q.deinit(self.allocator);
+            }
+            self.questions.deinit(self.allocator);
+        }
         for (0..self.packet.header.num_questions) |_| {
             try self.read_name(self.offset);
+            if (self.source_remaining().len < packed_size(Query.Footer)) return error.SourceTooShort;
             var question: Query.Footer = undefined;
             question.from_bytes(self.source_remaining());
             const question_name = try self.allocator.dupe(u8, self.current_name.items);
@@ -137,17 +156,38 @@ const Parser = struct {
             self.offset += 4;
         }
         self.packet.questions = try self.questions.toOwnedSlice(self.allocator);
+        errdefer {
+            for (self.packet.questions) |q| {
+                q.deinit(self.allocator);
+            }
+            self.allocator.free(self.packet.questions);
+        }
+
+        errdefer {
+            for (self.records.items) |r| {
+                r.deinit(self.allocator);
+            }
+            self.records.deinit(self.allocator);
+        }
         const records = self.packet.header.num_others();
         for (0..records) |_| {
             try self.read_name(self.offset);
+            if (self.source_remaining().len < packed_size(Record.Header)) return error.SourceTooShort;
             var record_header: Record.Header = undefined;
             record_header.from_bytes(self.source_remaining());
             self.offset += packed_size(Record.Header);
             try self.read_record(record_header);
         }
         self.packet.records = try self.records.toOwnedSlice(self.allocator);
-        // std.debug.assert(self.packet.records.len == records);
-        std.debug.assert(self.offset == self.source.len);
+        errdefer {
+            for (self.packet.records) |r| {
+                r.deinit(self.allocator);
+            }
+            self.allocator.free(self.packet.records);
+        }
+        if (self.offset != self.source.len) {
+            return error.TrailingBytes;
+        }
     }
 
     fn source_remaining(self: @This()) []const u8 {
@@ -170,16 +210,19 @@ const Parser = struct {
             }
             if (len < 0x40) {
                 ofs += 1 + len;
+                const label_end = pos + 1 + len;
+                if (label_end > self.source.len) return error.LabelLengthGreaterThanSource;
 
-                const label = self.source[pos + 1 .. pos + 1 + len];
-                self.current_name.appendSliceBounded(label) catch unreachable;
-                self.current_name.appendBounded('.') catch unreachable;
+                const label = self.source[pos + 1 .. label_end];
+                self.current_name.appendSliceBounded(label) catch return error.DNSNameTooLarge;
+                self.current_name.appendBounded('.') catch return error.DNSNameTooLarge;
                 continue;
             }
             if (len < 0xC0) {
                 return error.InvalidLabelLength;
             }
             // dns compression pointer thingy
+            if (ofs + 1 >= self.source.len) return error.SourceEndsWithPointer;
             const link_data = self.source[ofs + 1];
             const link: u16 = @as(u16, (len & 0x3F)) * 256 + link_data;
 
@@ -194,13 +237,13 @@ const Parser = struct {
             self.offset = ofs + 2;
             return;
         }
-        @panic("READ NAME OUT OF BOUNDS");
+        return error.ReadNameOutOfBounds;
     }
 
-    fn read_record(self: *@This(), record: Record.Header) !void {
+    fn read_record(self: *@This(), record: Record.Header) ReadRecordError!void {
         switch (record.type) {
             .A => {
-                std.debug.assert(record.length == 4);
+                if (record.length != 4) return error.InvalidRecordLength;
                 var rec: Record = .{
                     .name = try self.allocator.dupe(u8, self.current_name.items),
                     .header = record,
@@ -209,11 +252,11 @@ const Parser = struct {
                     },
                 };
                 errdefer self.allocator.free(rec.name);
-                @memcpy(&rec.body.A, self.read_string(4));
+                @memcpy(&rec.body.A, try self.read_string(4));
                 try self.records.append(self.allocator, rec);
             },
             .AAAA => {
-                std.debug.assert(record.length == 16);
+                if (record.length != 16) return error.InvalidRecordLength;
                 var rec: Record = .{
                     .name = try self.allocator.dupe(u8, self.current_name.items),
                     .header = record,
@@ -222,7 +265,7 @@ const Parser = struct {
                     },
                 };
                 errdefer self.allocator.free(rec.name);
-                @memcpy(&rec.body.AAAA, self.read_string(16));
+                @memcpy(&rec.body.AAAA, try self.read_string(16));
                 try self.records.append(self.allocator, rec);
             },
             .PTR => {
@@ -255,17 +298,19 @@ const Parser = struct {
             },
             .TXT => {
                 const name = try self.allocator.dupe(u8, self.current_name.items);
+                errdefer self.allocator.free(name);
                 try self.records.append(self.allocator, .{
                     .name = name,
                     .header = record,
                     .body = .{
-                        .TXT = try self.allocator.dupe(u8, self.read_string(record.length)),
+                        .TXT = try self.allocator.dupe(u8, try self.read_string(record.length)),
                     },
                 });
             },
             .SRV => {
                 const name = try self.allocator.dupe(u8, self.current_name.items);
                 errdefer self.allocator.free(name);
+                if (self.source_remaining().len < packed_size(Service.Header)) return error.SourceTooShort;
                 var service: Service.Header = undefined;
                 service.from_bytes(self.source_remaining());
                 self.offset += packed_size(Service.Header);
@@ -290,8 +335,9 @@ const Parser = struct {
         }
     }
 
-    fn read_string(self: *@This(), length: usize) []const u8 {
+    fn read_string(self: *@This(), length: usize) error{ReadStringOutOfBounds}![]const u8 {
         const end = self.offset + length;
+        if (end > self.source.len) return error.ReadStringOutOfBounds;
         const data = self.source[self.offset..end];
         self.offset = end;
         return data;
@@ -463,6 +509,23 @@ test "parseQueryResponse" {
 
     try packet.parse(std.testing.allocator, nsec);
     packet.deinit(std.testing.allocator);
+}
+
+test "fuzzParser" {
+    const alloc = std.testing.allocator;
+    const FuzzParser = struct {
+        fn testOne(ctx: *@This(), inbuf: []const u8) anyerror!void {
+            _ = ctx;
+            var pkg: Packet = undefined;
+            pkg.parse(alloc, inbuf) catch |err| {
+                if (std.testing.allocator_instance.detectLeaks()) return err;
+                return;
+            };
+            pkg.deinit(alloc);
+        }
+    };
+    var ctx: FuzzParser = .{};
+    try std.testing.fuzz(&ctx, FuzzParser.testOne, .{});
 }
 
 pub const ip_mreqn = extern struct {

@@ -46,12 +46,11 @@ pub fn main() !void {
         var packet: mdns.Packet = undefined;
         packet.parse(gpa, data) catch |err| {
             try stdout.print("parse error: \"{}\"\n", .{err});
-            packet.deinit(gpa);
             continue;
         };
         defer packet.deinit(gpa);
 
-        try stdout.print("packet: {f} skipped_records: {d}\n", .{
+        try stdout.print("packet: {f}\nskipped_records: {d}\n", .{
             std.json.fmt(packet.header, .{}),
             packet.skipped_records,
         });
