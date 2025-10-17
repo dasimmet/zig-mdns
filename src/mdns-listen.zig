@@ -20,16 +20,16 @@ pub fn main() !void {
         &std.mem.toBytes(@as(c_int, 1)),
     );
     try std.posix.bind(sock, &addr.any, addr.getOsSockLen());
-    const mreq = mdns.ip_mreqn{
-        .imr_multiaddr = .{ 224, 0, 0, 251 },
-        .imr_address = .{ 0, 0, 0, 0 },
-        .imr_ifindex = 0,
-    };
+
+    const addr_any = try std.net.Address.resolveIp("0.0.0.0", 5353);
     try std.posix.setsockopt(
         sock,
         std.posix.IPPROTO.IP,
         std.os.linux.IP.ADD_MEMBERSHIP,
-        @ptrCast(&mreq),
+        @ptrCast(&mdns.ip_mreqn{
+            .imr_multiaddr = @as(*const [4]u8, @ptrCast(&addr.in.sa.addr)).*,
+            .imr_address = @as(*const [4]u8, @ptrCast(&addr_any.in.sa.addr)).*,
+        }),
     );
 
     const stdout_fd = std.fs.File.stdout();
@@ -43,7 +43,7 @@ pub fn main() !void {
         if (len < mdns.Packet.HeaderSize) continue;
         const data = pac_buf[0..len];
         try stdout.print("data: \"{f}\"\n", .{std.zig.fmtString(data)});
-        var packet: mdns.Packet = undefined;
+        var packet: mdns.Packet = .{};
         packet.parse(gpa, data) catch |err| {
             try stdout.print("parse error: \"{}\"\n", .{err});
             continue;

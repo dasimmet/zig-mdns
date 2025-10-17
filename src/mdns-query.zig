@@ -7,7 +7,7 @@ pub fn main() !void {
     defer _ = gpa_impl.deinit();
 
     const addr = try std.net.Address.resolveIp("224.0.0.251", 5353);
-    // const addr2 = try std.net.Address.parseIp("0.0.0.0", 5353);
+    // const addr6 = try std.net.Address.resolveIp("ff02::fb", 5353);
     const sock = try std.posix.socket(
         std.posix.AF.INET,
         std.posix.SOCK.DGRAM | std.posix.SOCK.NONBLOCK,
@@ -21,16 +21,16 @@ pub fn main() !void {
         &std.mem.toBytes(@as(c_int, 1)),
     );
     try std.posix.bind(sock, &addr.any, addr.getOsSockLen());
-    const mreq = mdns.ip_mreqn{
-        .imr_multiaddr = .{ 224, 0, 0, 251 },
-        .imr_address = .{ 0, 0, 0, 0 },
-        .imr_ifindex = 0,
-    };
+
+    const addr_any = try std.net.Address.resolveIp("0.0.0.0", 5353);
     try std.posix.setsockopt(
         sock,
         std.posix.IPPROTO.IP,
         std.os.linux.IP.ADD_MEMBERSHIP,
-        @ptrCast(&mreq),
+        @ptrCast(&mdns.ip_mreqn{
+            .imr_multiaddr = @as(*const [4]u8, @ptrCast(&addr.in.sa.addr)).*,
+            .imr_address = @as(*const [4]u8, @ptrCast(&addr_any.in.sa.addr)).*,
+        }),
     );
 
     const stdout_fd = std.fs.File.stdout();
@@ -41,13 +41,15 @@ pub fn main() !void {
     const query1 = "\x00\x00\x00\x00\x00\x02\x00\x00\x00\x00\x00\x00\x0b_googlecast\x04_tcp\x05local\x00\x00\x0c\x80\x01\x05_http\xc0\x18\x00\x0c\x80\x01";
     _ = try std.posix.sendto(sock, query1, 0, &addr.any, addr.getOsSockLen());
     // const query2 = "\x00\x00\x00\x00\x00\x02\x00\x00\x00\x00\x00\x00\x04_smb\x04_tcp\x05local\x00\x00\x0c\x00\x01\x0c_device-info\xc0\x11\x00\x0c\x00\x01";
-    const query2 = "\x00\x00\x00\x00\x00\x01\x00\x00\x00\x00\x00\x00\x0233\x03132\x03168\x03192\x07in-addr\x04arpa\x05local\x00\x00\x0c\x00\x01";
+    // const query2 = "\x00\x00\x00\x00\x00\x01\x00\x00\x00\x00\x00\x00\x0233\x03132\x03168\x03192\x07in-addr\x04arpa\x05local\x00\x00\x0c\x00\x01";
     // const query2 = "                                                                                                                       ";
-    _ = try std.posix.sendto(sock, query2, 0, &addr.any, addr.getOsSockLen());
+    // _ = try std.posix.sendto(sock, query1, 0, &addr.any, addr.getOsSockLen());
 
     const t = std.time.microTimestamp();
     var pac_buf: [1024]u8 = undefined;
     var pacs_received: usize = 0;
+    var queries_received: usize = 0;
+    var responses_received: usize = 0;
     while (std.time.microTimestamp() - t < 3 * std.time.us_per_s) {
         const len = std.posix.recv(sock, &pac_buf, 0) catch |err| switch (err) {
             error.WouldBlock => {
@@ -60,13 +62,17 @@ pub fn main() !void {
         if (len < mdns.Packet.HeaderSize) continue;
         const data = pac_buf[0..len];
         try stdout.print("data: \"{f}\"\n", .{std.zig.fmtString(data)});
-        var packet: mdns.Packet = undefined;
+        var packet: mdns.Packet = .{};
         packet.parse(gpa, data) catch |err| {
             try stdout.print("parse error: \"{}\"\n", .{err});
             try stdout.flush();
             continue;
         };
         defer packet.deinit(gpa);
+        switch (packet.header.flags.qr) {
+            .query => queries_received += 1,
+            .response => responses_received += 1,
+        }
 
         try stdout.print("packet: {f}\nskipped_records: {d}\n", .{
             std.json.fmt(packet.header, .{}),
@@ -87,7 +93,11 @@ pub fn main() !void {
         try stdout.flush();
     }
 
-    try stdout.print("pacs_received: {d}\n", .{pacs_received});
+    try stdout.print("pacs: {d}\nqueries: {d}\nresponses: {d}\n", .{
+        pacs_received,
+        queries_received,
+        responses_received,
+    });
     try stdout.flush();
 }
 

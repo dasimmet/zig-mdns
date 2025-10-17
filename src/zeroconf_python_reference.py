@@ -2,7 +2,6 @@
 
 from zeroconf import ServiceBrowser, ServiceListener, Zeroconf
 import zeroconf
-zeroconf._protocol.incoming.DNSIncoming
 
 class MyListener(ServiceListener):
 
