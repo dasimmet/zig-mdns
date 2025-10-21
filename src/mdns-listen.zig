@@ -7,10 +7,7 @@ pub fn main() !void {
     const gpa = gpa_impl.allocator();
     defer _ = gpa_impl.deinit();
 
-    const addr = try std.net.Address.parseIp("224.0.0.251", 5353);
-    const sock = try Socket.open(.{
-        .addr = addr,
-    });
+    const sock = try Socket.open(.{});
     defer sock.close();
 
     const stdout_fd = std.fs.File.stdout();

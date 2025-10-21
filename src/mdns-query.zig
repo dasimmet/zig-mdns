@@ -7,11 +7,7 @@ pub fn main() !void {
     const gpa = gpa_impl.allocator();
     defer _ = gpa_impl.deinit();
 
-    const addr = try std.net.Address.resolveIp("224.0.0.251", 5353);
-    // const addr6 = try std.net.Address.resolveIp("ff02::fb", 5353);
-
     const sock = try Socket.open(.{
-        .addr = addr,
         .blocking = false,
     });
     defer sock.close();
