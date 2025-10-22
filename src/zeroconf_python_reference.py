@@ -15,12 +15,12 @@ class MyListener(ServiceListener):
         info = zc.get_service_info(type_, name)
         print(f"Service {name} added, service info: {info}")
 
-
 zc = Zeroconf()
 listener = MyListener()
 browser = ServiceBrowser(zc, [
     "_googlecast._tcp.local.",
     "_http._tcp.local.",
+    "_smb._tcp.local."
 ], listener)
 
 a = bytes.fromhex("0000000000010000000000000b5f676f6f676c6563617374045f746370056c6f63616c00000c8001")

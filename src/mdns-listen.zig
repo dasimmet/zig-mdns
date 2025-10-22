@@ -15,10 +15,9 @@ pub fn main() !void {
     var stdout_writer = stdout_fd.writer(&stdout_buf);
     const stdout = &stdout_writer.interface;
 
-    var pac_buf: [1024]u8 = undefined;
+    var pac_buf: [4096]u8 = undefined;
     while (true) {
         const data = try sock.receive(&pac_buf);
-        if (data.len < mdns.Packet.HeaderSize) continue;
         try stdout.print("data: \"{f}\"\n", .{std.zig.fmtString(data)});
         var packet: mdns.Packet = .{};
         packet.parse(gpa, data) catch |err| {

@@ -6,66 +6,64 @@ group: std.net.Address,
 bind: std.net.Address,
 
 pub const Options = struct {
-    group: std.net.Address = mdns_addr,
-    bind: std.net.Address = zero_addr,
+    group: std.net.Address = addr_mdns,
+    bind: std.net.Address = addr_any,
     blocking: bool = true,
 };
 
-const zero_addr = std.net.Address.parseIp("0.0.0.0", 5353) catch unreachable;
-const mdns_addr = std.net.Address.parseIp("224.0.0.251", 5353) catch unreachable;
+const addr_any = std.net.Address.parseIp("0.0.0.0", 0) catch unreachable;
+const addr_mdns = std.net.Address.parseIp("224.0.0.251", 5353) catch unreachable;
 
-pub fn open(opt: Options) !@This() {
+pub const SockOpenError = std.posix.SetSockOptError || std.posix.BindError || std.posix.SocketError;
+
+pub fn open(opt: Options) SockOpenError!@This() {
     var flags: u32 = std.posix.SOCK.DGRAM;
     if (!opt.blocking) flags = flags | std.posix.SOCK.NONBLOCK;
-    const self: @This() = .{
-        .group = opt.group,
-        .bind = opt.bind,
-        .sock = try std.posix.socket(
-            std.posix.AF.INET,
-            flags,
-            std.posix.IPPROTO.UDP,
-        ),
-    };
+    const sock = try std.posix.socket(
+        std.posix.AF.INET,
+        flags,
+        std.posix.IPPROTO.UDP,
+    );
     try std.posix.setsockopt(
-        self.sock,
+        sock,
         std.posix.SOL.SOCKET,
         std.posix.SO.REUSEADDR,
         &std.mem.toBytes(@as(c_int, 1)),
     );
     if (@hasDecl(std.posix.SO, "REUSEPORT")) {
         try std.posix.setsockopt(
-            self.sock,
+            sock,
             std.posix.SOL.SOCKET,
             std.posix.SO.REUSEPORT,
             &std.mem.toBytes(@as(c_int, 1)),
         );
     }
     try std.posix.setsockopt(
-        self.sock,
+        sock,
         std.posix.IPPROTO.IP,
         os.MULTICAST_TTL,
-        &.{255},
+        &std.mem.toBytes(@as(c_int, 255)),
     );
     try std.posix.setsockopt(
-        self.sock,
+        sock,
         std.posix.IPPROTO.IP,
         os.IP_TTL,
-        &.{255},
+        &std.mem.toBytes(@as(c_int, 255)),
     );
     try std.posix.setsockopt(
-        self.sock,
+        sock,
         std.posix.IPPROTO.IP,
         os.MULTICAST_LOOP,
-        &.{1},
+        &std.mem.toBytes(@as(c_int, 1)),
     );
 
     try std.posix.bind(
-        self.sock,
+        sock,
         &opt.bind.any,
         opt.bind.getOsSockLen(),
     );
     try std.posix.setsockopt(
-        self.sock,
+        sock,
         std.posix.IPPROTO.IP,
         os.IP_ADD_MEMBERSHIP,
         @ptrCast(&ip_mreqn{
@@ -74,7 +72,11 @@ pub fn open(opt: Options) !@This() {
         }),
     );
 
-    return self;
+    return .{
+        .group = opt.group,
+        .bind = opt.bind,
+        .sock = sock,
+    };
 }
 
 pub fn send(self: @This(), data: []const u8) !void {
@@ -89,7 +91,13 @@ pub fn send(self: @This(), data: []const u8) !void {
 }
 
 pub fn receive(self: @This(), buf: []u8) ![]u8 {
-    const len = try std.posix.recv(self.sock, buf, 0);
+    const len = try std.posix.recvfrom(
+        self.sock,
+        buf,
+        0,
+        @constCast(&self.bind.any),
+        @constCast(&self.bind.getOsSockLen()),
+    );
     return buf[0..len];
 }
 
