@@ -16,6 +16,12 @@ class MyListener(ServiceListener):
         print(f"Service {name} added, service info: {info}")
 
 zc = Zeroconf()
+
+# ./src/zeroconf_python_reference.py 
+# sock: 5353 IPVersion.V4Only False ('',)
+# sock: 5353 IPVersion.V4Only False ('192.168.132.212',)
+# sock: 5353 IPVersion.V4Only False ('127.0.0.1',)
+
 listener = MyListener()
 browser = ServiceBrowser(zc, [
     "_googlecast._tcp.local.",
